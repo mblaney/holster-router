@@ -8,6 +8,13 @@
     "src"
   ],
   "keywords": [],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mblaney/holster-router.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mblaney/holster-router/issues"
+  },
   "author": "Malcolm Blaney",
   "license": "Zlib, MIT, Apache-2.0",
   "dependencies": {
