@@ -1,0 +1,33 @@
+{
+  "name": "@mblaney/holster-router",
+  "version": "0.1.0",
+  "description": "Express router for holster applications",
+  "type": "module",
+  "main": "src/index.js",
+  "files": [
+    "src"
+  ],
+  "keywords": [],
+  "author": "Malcolm Blaney",
+  "license": "Zlib, MIT, Apache-2.0",
+  "dependencies": {
+    "nodemailer": "^6.9.13"
+  },
+  "peerDependencies": {
+    "@mblaney/holster": ">=2.1.0",
+    "express": ">=4.18.0"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@mblaney/holster": "^2.1.0",
+    "mock-socket": "^9.3.1",
+    "prettier": "^3.4.2"
+  },
+  "prettier": {
+    "semi": false,
+    "bracketSpacing": false,
+    "arrowParens": "avoid"
+  }
+}
