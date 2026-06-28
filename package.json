@@ -1,6 +1,6 @@
 {
   "name": "@mblaney/holster-router",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Express router for holster applications",
   "type": "module",
   "main": "src/index.js",
@@ -14,6 +14,9 @@
   },
   "bugs": {
     "url": "https://github.com/mblaney/holster-router/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "author": "Malcolm Blaney",
   "license": "Zlib, MIT, Apache-2.0",
