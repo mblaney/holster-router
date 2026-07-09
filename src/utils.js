@@ -7,12 +7,12 @@ export function newCode() {
   return code
 }
 
-export async function checkCodes(user, inviteCodes, newCodes) {
+export async function checkCodes(user, loginCodes, newCodes) {
   const accounts = await new Promise(resolve => user.get("accounts", resolve))
   const existing = Object.keys(accounts || {})
   for (const code of newCodes) {
     if (existing.includes(code)) return false
-    if (inviteCodes.has(code)) return false
+    if (loginCodes.has(code)) return false
   }
   return true
 }

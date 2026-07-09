@@ -22,16 +22,16 @@ export async function writeUserLimit(pub, limit) {
   }
 }
 
-export function createAdmin(holster, inviteCodes, mail, federatedHosts) {
+export function createAdmin(holster, loginCodes, mail, federatedHosts) {
   const user = holster.user()
 
-  async function createInviteCodes(count, owner, account) {
+  async function createLoginCodes(count, owner, account) {
     const newCodes = []
     let i = 0
     while (i++ < count) newCodes.push(newCode())
 
     if (
-      !(await checkCodes(user, inviteCodes, newCodes)) ||
+      !(await checkCodes(user, loginCodes, newCodes)) ||
       !(await checkHosts(newCodes, federatedHosts))
     ) {
       // If a duplicate code is found, return false and the request can be tried
@@ -42,22 +42,22 @@ export function createAdmin(holster, inviteCodes, mail, federatedHosts) {
 
     const secret = await holster.SEA.secret(account, user.is)
     for (const code of newCodes) {
-      const invite = {code, owner}
-      const enc = await holster.SEA.encrypt(invite, user.is)
+      const login = {code, owner}
+      const enc = await holster.SEA.encrypt(login, user.is)
       let err = await new Promise(resolve => {
-        user.get("available").next("invite_codes").put(enc, true, resolve)
+        user.get("available").next("login_codes").put(enc, true, resolve)
       })
       if (err) {
         console.log(err)
         return false
       }
 
-      console.log("New invite code available", invite)
+      console.log("New login code available", login)
       const shared = await holster.SEA.encrypt(code, secret)
       err = await new Promise(resolve => {
         user
           .get("shared")
-          .next("invite_codes")
+          .next("login_codes")
           .next(owner)
           .put(shared, true, resolve)
       })
@@ -71,7 +71,7 @@ export function createAdmin(holster, inviteCodes, mail, federatedHosts) {
 
   const admin = express.Router()
 
-  admin.post("/create-invite-codes", async (req, res) => {
+  admin.post("/create-login-codes", async (req, res) => {
     const code = req.body.code
     if (!code) {
       res.status(400).send("code required")
@@ -94,7 +94,7 @@ export function createAdmin(holster, inviteCodes, mail, federatedHosts) {
       return
     }
 
-    if (await createInviteCodes(req.body.count || 1, code, account)) {
+    if (await createLoginCodes(req.body.count || 1, code, account)) {
       res.end()
       return
     }
@@ -104,7 +104,7 @@ export function createAdmin(holster, inviteCodes, mail, federatedHosts) {
       .send("Error creating codes. Please check logs for errors and try again")
   })
 
-  admin.post("/send-invite-code", (req, res) => {
+  admin.post("/send-login-code", (req, res) => {
     const code = req.body.code
     if (!code) {
       res.status(400).send("code required")
@@ -115,7 +115,7 @@ export function createAdmin(holster, inviteCodes, mail, federatedHosts) {
       res.status(400).send("email required")
       return
     }
-    mail.sendInviteCode(code, email)
+    mail.sendLoginCode(code, email)
     res.end()
   })
 

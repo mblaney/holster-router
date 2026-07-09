@@ -1,7 +1,7 @@
 import express from "express"
 import {newCode, checkCodes} from "./utils.js"
 
-export function createRouter(holster, inviteCodes, mail, accountDefaults) {
+export function createRouter(holster, loginCodes, mail, accountDefaults) {
   const user = holster.user()
   const router = express.Router()
 
@@ -27,14 +27,14 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
     res.status(404).send("Host public key not found")
   })
 
-  router.post("/request-invite-code", (req, res) => {
+  router.post("/request-login-code", (req, res) => {
     if (!req.body.email) {
       res.status(400).send("email required")
       return
     }
 
-    mail.requestInvite(req.body.email)
-    res.send("Invite code requested")
+    mail.requestLogin(req.body.email)
+    res.send("Login code requested")
   })
 
   router.post("/check-codes", async (req, res) => {
@@ -46,7 +46,7 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
       res.status(500).send("Host error")
       return
     }
-    if (await checkCodes(user, inviteCodes, req.body.codes)) {
+    if (await checkCodes(user, loginCodes, req.body.codes)) {
       res.end() // ok
       return
     }
@@ -54,9 +54,9 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
     res.status(400).send("duplicate code found")
   })
 
-  router.post("/check-invite-code", (req, res) => {
+  router.post("/check-login-code", (req, res) => {
     const code = req.body.code || "admin"
-    if (inviteCodes.has(code)) {
+    if (loginCodes.has(code)) {
       res.end() // ok
       return
     }
@@ -69,21 +69,21 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
     user.get("accounts").next(code, used => {
       if (used) {
         if (code === "admin") {
-          res.status(400).send("Please provide an invite code")
+          res.status(400).send("Please provide a login code")
           return
         }
-        res.status(400).send("Invite code already used")
+        res.status(400).send("Login code already used")
         return
       }
-      res.status(404).send("Invite code not found")
+      res.status(404).send("Login code not found")
     })
   })
 
-  router.post("/claim-invite-code", async (req, res) => {
+  router.post("/verify-login-code", async (req, res) => {
     const code = req.body.code || "admin"
-    const invite = inviteCodes.get(code)
-    if (!invite) {
-      res.status(404).send("Invite code not found")
+    const login = loginCodes.get(code)
+    if (!login) {
+      res.status(404).send("Login code not found")
       return
     }
     if (!req.body.pub) {
@@ -124,7 +124,7 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
       name: req.body.username,
       email: encEmail,
       validate: encValidate,
-      ref: invite.owner,
+      ref: login.owner,
     }
     let err = await new Promise(resolve => {
       user.get("accounts").next(code).put(data, resolve)
@@ -149,12 +149,12 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
     }
 
     mail.validateEmail(req.body.username, req.body.email, code, validate)
-    // Remove invite code as it's no longer available.
+    // Remove login code as it's no longer available.
     err = await new Promise(resolve => {
       user
         .get("available")
-        .next("invite_codes")
-        .next(invite.key)
+        .next("login_codes")
+        .next(login.key)
         .put(null, resolve)
     })
     if (err) {
@@ -163,26 +163,26 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
       return
     }
 
-    inviteCodes.delete(code)
+    loginCodes.delete(code)
     if (code === "admin") {
       res.end()
       return
     }
 
-    // Also remove from shared codes of the invite owner.
+    // Also remove from shared codes of the login owner.
     const account = await new Promise(resolve => {
-      user.get("accounts").next(invite.owner, resolve)
+      user.get("accounts").next(login.owner, resolve)
     })
     if (!account || !account.epub) {
-      console.log(`Account not found for invite.owner: ${invite.owner}`)
+      console.log(`Account not found for login.owner: ${login.owner}`)
       res.end()
       return
     }
 
     user
       .get("shared")
-      .next("invite_codes")
-      .next(invite.owner, async codes => {
+      .next("login_codes")
+      .next(login.owner, async codes => {
         if (!codes) return
 
         const secret = await holster.SEA.secret(account, user.is)
@@ -196,8 +196,8 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
             found = true
             user
               .get("shared")
-              .next("invite_codes")
-              .next(invite.owner)
+              .next("login_codes")
+              .next(login.owner)
               .next(key)
               .put(null, err => {
                 if (err) console.log(err)
@@ -211,7 +211,7 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
   router.post("/validate-email", async (req, res) => {
     const code = req.body.code
     if (!code) {
-      res.status(400).send("Invite code required")
+      res.status(400).send("Login code required")
       return
     }
     if (!req.body.validate) {
@@ -258,7 +258,7 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
   router.post("/reset-password", async (req, res) => {
     const code = req.body.code
     if (!code) {
-      res.status(400).send("Invite code required")
+      res.status(400).send("Login code required")
       return
     }
     if (!req.body.email) {
@@ -288,7 +288,7 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
 
     const email = await holster.SEA.decrypt(account.email, user.is)
     if (email !== req.body.email) {
-      res.status(400).send("Email does not match invite code")
+      res.status(400).send("Email does not match login code")
       return
     }
     if (account.validate) {
@@ -320,7 +320,7 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
   router.post("/update-password", async (req, res) => {
     const code = req.body.code
     if (!code) {
-      res.status(400).send("Invite code required")
+      res.status(400).send("Login code required")
       return
     }
     if (!req.body.reset) {
@@ -397,10 +397,10 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
               return
             }
 
-            // Also update shared invite codes for this account.
+            // Also update shared login codes for this account.
             user
               .get("shared")
-              .next("invite_codes")
+              .next("login_codes")
               .next(code, async codes => {
                 if (codes) {
                   const oldSecret = await holster.SEA.secret(account, user.is)
@@ -413,7 +413,7 @@ export function createRouter(holster, inviteCodes, mail, accountDefaults) {
                     const err = await new Promise(resolve => {
                       user
                         .get("shared")
-                        .next("invite_codes")
+                        .next("login_codes")
                         .next(code)
                         .next(key)
                         .put(shared, resolve)

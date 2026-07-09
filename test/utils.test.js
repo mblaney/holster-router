@@ -19,11 +19,11 @@ describe("checkCodes", () => {
     assert.equal(await checkCodes(user, new Map(), [code]), false)
   })
 
-  test("returns false for a code in inviteCodes", async () => {
+  test("returns false for a code in loginCodes", async () => {
     const user = await createTestUser()
     const code = newCode()
-    const inviteCodes = new Map([[code, {code, owner: "owner"}]])
-    assert.equal(await checkCodes(user, inviteCodes, [code]), false)
+    const loginCodes = new Map([[code, {code, owner: "owner"}]])
+    assert.equal(await checkCodes(user, loginCodes, [code]), false)
   })
 
   test("returns false if any code in a batch is a duplicate", async () => {

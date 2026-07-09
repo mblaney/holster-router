@@ -20,21 +20,21 @@ export function createMail(opts = {}) {
     })
   }
 
-  function requestInvite(email) {
-    const message = `Thanks for requesting an invite code at ${opts.appHost}
+  function requestLogin(email) {
+    const message = `Thanks for requesting a login code at ${opts.appHost}
 
-There is a waiting list to create new accounts, an invite code will be sent to your email address ${email} when it becomes available.`
+There is a waiting list to create new accounts, a login code will be sent to your email address ${email} when it becomes available.`
     // If mailFrom is not set then the message is already logged.
-    if (opts.mailFrom && !opts.mailBcc) console.log("Invite request", email)
-    send(email, "Invite request", message, opts.mailBcc)
+    if (opts.mailFrom && !opts.mailBcc) console.log("Login code request", email)
+    send(email, "Login code request", message, opts.mailBcc)
   }
 
-  function sendInviteCode(code, email) {
+  function sendLoginCode(code, email) {
     const message = `Hello, thanks for waiting!
 
-You can now create an account at ${opts.appHost}/register using your invite code ${code}
+You can now create an account at ${opts.appHost}/register using your login code ${code}
 `
-    send(email, "Invite code", message)
+    send(email, "Login code", message)
   }
 
   function validateEmail(name, email, code, validate) {
@@ -61,5 +61,5 @@ ${remaining <= 5 ? `Note that you can only reset your password ${remaining} more
     send(email, "Update your password", message)
   }
 
-  return {requestInvite, sendInviteCode, validateEmail, resetPassword}
+  return {requestLogin, sendLoginCode, validateEmail, resetPassword}
 }

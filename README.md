@@ -1,4 +1,4 @@
-Holster-router provides [Express](https://expressjs.com) routers for [Holster](https://github.com/mblaney/holster) applications. It handles account management, invite codes, email validation and password reset, so that apps built on Holster don't need to reimplement this infrastructure.
+Holster-router provides [Express](https://expressjs.com) routers for [Holster](https://github.com/mblaney/holster) applications. It handles account management, login codes, email validation and password reset, so that apps built on Holster don't need to reimplement this infrastructure.
 
 ### Install
 
@@ -51,9 +51,9 @@ app.listen(3000)
 | `hostStorageLimit` | Storage limit in MB written to `.user_limit.json` on startup (default: `1024`) |
 | `appHost` | Server URL used in email links and stored on account data (default: `http://localhost:3000`) |
 | `mailFrom` | Sender address for outgoing email. If not set, email content is logged instead |
-| `mailBcc` | BCC address copied on outgoing invite request emails |
-| `federatedHosts` | Comma-separated list of other holster-router servers to check for duplicate invite codes |
-| `accountDefaults` | An object merged into account data when an invite code is claimed. Use this to set app-specific fields on new accounts (e.g. `{feeds: 10, subscribed: 0}`) |
+| `mailBcc` | BCC address copied on outgoing login code request emails |
+| `federatedHosts` | Comma-separated list of other holster-router servers to check for duplicate login codes |
+| `accountDefaults` | An object merged into account data when an login code is claimed. Use this to set app-specific fields on new accounts (e.g. `{feeds: 10, subscribed: 0}`) |
 
 ### Setup: creating a host account
 
@@ -65,19 +65,19 @@ const holster = Holster({port: 8765})
 const user = holster.user()
 user.create("host", "password", console.log)
 
-// Log in and create an initial invite code so the first account can register:
+// Log in and create an initial login code so the first account can register:
 user.auth("host", "password", console.log)
 const enc = await holster.SEA.encrypt({code: "admin", owner: ""}, user.is)
 
 // Wait for encrypt to finish, then store the code:
-user.get("available").next("invite_codes").put(enc, true, console.log)
+user.get("available").next("login_codes").put(enc, true, console.log)
 ```
 
 `console.log` is used as the callback and logs `null` on success. Use a real username and password, not the defaults shown here.
 
 Pass the credentials used here into `routerAdmin` via the options parameter before starting the server. All private data in Holster is encrypted using these credentials, so keep them safe.
 
-The first account registered is given the code `"admin"` and can then create invite codes for other accounts.
+The first account registered is given the code `"admin"` and can then create login codes for other accounts.
 
 ### Public routes
 
@@ -85,34 +85,34 @@ These routes are mounted by `router` and require no authentication.
 
 - `GET /health` — Returns uptime, memory usage and timestamp.
 
-- `GET /host-public-key` — Returns the host account's public key. The browser needs this to query data stored under the host's namespace in Holster. For example, after a user authenticates locally with Holster, the frontend can look up the user's invite code using the host public key:
+- `GET /host-public-key` — Returns the host account's public key. The browser needs this to query data stored under the host's namespace in Holster. For example, after a user authenticates locally with Holster, the frontend can look up the user's login code using the host public key:
   ```js
   const code = await new Promise(res => {
     user.get([host, "map"]).next("account:" + user.is.pub, res)
   })
   ```
 
-- `POST /request-invite-code` — Sends an email to the provided address requesting an invite code from the host. Required: `email`.
+- `POST /request-login-code` — Sends an email to the provided address requesting a login code from the host. Required: `email`.
 
-- `POST /check-codes` — Used by federated hosts (see the `federatedHosts` option) to verify that a batch of invite codes does not collide with codes on this server. Required: `codes` (array of strings).
+- `POST /check-codes` — Used by federated hosts (see the `federatedHosts` option) to verify that a batch of login codes does not collide with codes on this server. Required: `codes` (array of strings).
 
-- `POST /check-invite-code` — Checks whether an invite code is available. Required: `code`.
+- `POST /check-login-code` — Checks whether a login code is available. Required: `code`.
 
-- `POST /claim-invite-code` — Registers a new account against an invite code. Required: `code`, `pub`, `epub`, `username`, `email`. Sends a validation email. Also stores a mapping from the account's public key to its invite code so the frontend can retrieve the code after authenticating with Holster (see `/host-public-key` above).
+- `POST /verify-login-code` — Registers a new account against a login code. Required: `code`, `pub`, `epub`, `username`, `email`. Sends a validation email. Also stores a mapping from the account's public key to its login code so the frontend can retrieve the code after authenticating with Holster (see `/host-public-key` above).
 
 - `POST /validate-email` — Validates an account email using the code sent during registration. Required: `code`, `validate`.
 
 - `POST /reset-password` — Sends a password reset email. Required: `code`, `email`.
 
-- `POST /update-password` — Updates account keys after a password reset. Required: `code`, `reset`, `pub`, `epub`, `username`, `name`. Re-encrypts any shared invite codes under the new key pair. Returns the previous public key so the frontend can migrate local data.
+- `POST /update-password` — Updates account keys after a password reset. Required: `code`, `reset`, `pub`, `epub`, `username`, `name`. Re-encrypts any shared login codes under the new key pair. Returns the previous public key so the frontend can migrate local data.
 
 ### Private routes
 
 These routes are mounted by `admin` and should be protected by mounting an auth middleware at the same path (see Usage section above):
 
-- `POST /private/create-invite-codes` — Creates invite codes and assigns them to an account. Required: `code`. Optional: `count` (default: 1). The account's email must be validated first.
+- `POST /private/create-login-codes` — Creates login codes and assigns them to an account. Required: `code`. Optional: `count` (default: 1). The account's email must be validated first.
 
-- `POST /private/send-invite-code` — Emails an invite code to an address. Required: `code`, `email`.
+- `POST /private/send-login-code` — Emails a login code to an address. Required: `code`, `email`.
 
 - `POST /private/update-storage-limit` — Updates the Holster storage limit for an account in `.user_limit.json`. Required: `code`, `limit` (MB).
 

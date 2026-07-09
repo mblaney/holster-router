@@ -11,28 +11,28 @@ export default function routerAdmin(holster, opts = {}) {
   const mail = createMail({...opts, appHost})
 
   const user = holster.user()
-  // inviteCodes is a map of invite codes and their (random) holster keys,
+  // loginCodes is a map of login codes and their (random) holster keys,
   // stored in memory to avoid decrypting them in each of the functions they're
   // required in.
-  const inviteCodes = new Map()
+  const loginCodes = new Map()
 
-  function mapInviteCodes() {
+  function mapLoginCodes() {
     if (!user.is) {
-      console.log("mapInviteCodes: Host error")
+      console.log("mapLoginCodes: Host error")
       return
     }
 
     user
       .get("available")
-      .next("invite_codes")
+      .next("login_codes")
       .on(async codes => {
         if (!codes) return
 
         for (const [key, enc] of Object.entries(codes)) {
-          const invite = await holster.SEA.decrypt(enc, user.is)
-          if (invite && !inviteCodes.has(invite.code)) {
-            invite.key = key
-            inviteCodes.set(invite.code, invite)
+          const login = await holster.SEA.decrypt(enc, user.is)
+          if (login && !loginCodes.has(login.code)) {
+            login.key = key
+            loginCodes.set(login.code, login)
           }
         }
       }, true)
@@ -44,13 +44,13 @@ export default function routerAdmin(holster, opts = {}) {
       console.log(err)
     } else {
       console.log(username + " logged in")
-      mapInviteCodes()
+      mapLoginCodes()
       await writeUserLimit(user.is.pub, hostStorageLimit)
     }
   })
 
   return {
-    router: createRouter(holster, inviteCodes, mail, accountDefaults),
-    admin: createAdmin(holster, inviteCodes, mail, opts.federatedHosts),
+    router: createRouter(holster, loginCodes, mail, accountDefaults),
+    admin: createAdmin(holster, loginCodes, mail, opts.federatedHosts),
   }
 }

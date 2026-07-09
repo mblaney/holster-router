@@ -1,6 +1,6 @@
 {
   "name": "@mblaney/holster-router",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Express router for holster applications",
   "type": "module",
   "main": "src/index.js",
