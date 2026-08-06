@@ -44,16 +44,18 @@ app.listen(3000)
 
 `routerAdmin` accepts an options object as a second parameter:
 
-| Option | Description |
-|---|---|
-| `username` | Host account username (default: `host`) |
-| `password` | Host account password (default: `password`) |
-| `hostStorageLimit` | Storage limit in MB written to `.user_limit.json` on startup (default: `1024`) |
-| `appHost` | Server URL used in email links and stored on account data (default: `http://localhost:3000`) |
-| `mailFrom` | Sender address for outgoing email. If not set, email content is logged instead |
-| `mailBcc` | BCC address copied on outgoing login code request emails |
-| `federatedHosts` | Comma-separated list of other holster-router servers to check for duplicate login codes |
-| `accountDefaults` | An object merged into account data when an login code is claimed. Use this to set app-specific fields on new accounts (e.g. `{feeds: 10, subscribed: 0}`) |
+| Option                | Description                                                                                                                                               |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `username`            | Host account username (default: `host`)                                                                                                                   |
+| `password`            | Host account password (default: `password`)                                                                                                               |
+| `hostStorageLimit`    | Storage limit in MB written to `.user_limit.json` on startup (default: `1024`)                                                                            |
+| `appHost`             | Server URL used in email links and stored on account data (default: `http://localhost:3000`)                                                              |
+| `mailFrom`            | Sender address for outgoing email. If not set, email content is logged instead                                                                            |
+| `mailBcc`             | BCC address copied on outgoing login code request emails                                                                                                  |
+| `federatedHosts`      | Comma-separated list of other holster-router servers to check for duplicate login codes                                                                   |
+| `accountDefaults`     | An object merged into account data when an login code is claimed. Use this to set app-specific fields on new accounts (e.g. `{feeds: 10, subscribed: 0}`) |
+| `signup`              | Enables `POST /signup` for direct, one-step account registration (default: disabled)                                                                      |
+| `availableLoginCodes` | Target size of the pool of login codes kept available for `/signup` (default: `10`)                                                                       |
 
 ### Setup: creating a host account
 
@@ -77,7 +79,7 @@ user.get("available").next("login_codes").put(enc, true, console.log)
 
 Pass the credentials used here into `routerAdmin` via the options parameter before starting the server. All private data in Holster is encrypted using these credentials, so keep them safe.
 
-The first account registered is given the code `"admin"` and can then create login codes for other accounts.
+The first account registered is given the code `"admin"` and can then create login codes for other accounts. Alternatively, enable the `signup` option to have holster-router generate and maintain a pool of login codes automatically, so new accounts can register directly via `POST /signup` without an admin creating a code for each one.
 
 ### Public routes
 
@@ -86,6 +88,7 @@ These routes are mounted by `router` and require no authentication.
 - `GET /health` — Returns uptime, memory usage and timestamp.
 
 - `GET /host-public-key` — Returns the host account's public key. The browser needs this to query data stored under the host's namespace in Holster. For example, after a user authenticates locally with Holster, the frontend can look up the user's login code using the host public key:
+
   ```js
   const code = await new Promise(res => {
     user.get([host, "map"]).next("account:" + user.is.pub, res)
@@ -99,6 +102,8 @@ These routes are mounted by `router` and require no authentication.
 - `POST /check-login-code` — Checks whether a login code is available. Required: `code`.
 
 - `POST /verify-login-code` — Registers a new account against a login code. Required: `code`, `pub`, `epub`, `username`, `email`. Sends a validation email. Also stores a mapping from the account's public key to its login code so the frontend can retrieve the code after authenticating with Holster (see `/host-public-key` above).
+
+- `POST /signup` — Registers a new account in one step, without requiring a login code from the caller. Required: `pub`, `epub`, `username`, `email`. Only available when the `signup` option is enabled; a code is drawn from an internal pool (kept topped up to `availableLoginCodes`) and the rest of the behavior matches `/verify-login-code`. Returns `503` if the pool is temporarily empty.
 
 - `POST /validate-email` — Validates an account email using the code sent during registration. Required: `code`, `validate`.
 

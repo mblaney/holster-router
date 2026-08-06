@@ -1,9 +1,143 @@
 import express from "express"
-import {newCode, checkCodes} from "./utils.js"
+import {newCode, checkCodes, createLoginCodes} from "./utils.js"
 
-export function createRouter(holster, loginCodes, mail, accountDefaults) {
+export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   const user = holster.user()
   const router = express.Router()
+
+  function signupPoolSize() {
+    let count = 0
+    for (const login of loginCodes.values()) {
+      if (!login.owner && login.code !== "admin") count++
+    }
+    return count
+  }
+
+  if (opts.signup) {
+    const interval = setInterval(() => {
+      const availableLoginCodes = opts.availableLoginCodes ?? 10
+      const count = availableLoginCodes - signupPoolSize()
+      // Replenish when half available, batching federated host checks
+      // instead of checking on every signup.
+      if (count >= availableLoginCodes / 2) {
+        createLoginCodes(holster, user, loginCodes, opts, count)
+      }
+    }, 60000)
+    // Don't let this timer alone keep the process alive.
+    interval.unref()
+  }
+
+  function validateRegistration(body) {
+    if (!body.pub) return {status: 400, message: "Public key required"}
+    if (!body.epub) return {status: 400, message: "Epub key required"}
+    if (!body.username) return {status: 400, message: "Username required"}
+    if (!/^\w+$/.test(body.username)) {
+      return {
+        status: 400,
+        message: "Username must contain only numbers, letters and underscore",
+      }
+    }
+    if (!body.email) return {status: 400, message: "Email required"}
+    return null
+  }
+
+  // Creates an account for a claimed login code, used by both
+  // /verify-login-code (code supplied by the caller) and /signup (code
+  // reserved from the ownerless pool by the caller). Assumes body has
+  // already passed validateRegistration and the caller has already removed
+  // login from loginCodes. Returns null on success, or {status, message} to
+  // send as an error response.
+  async function registerAccount(login, code, body) {
+    if (!user.is) return {status: 500, message: "Host error"}
+
+    const validate = newCode()
+    const encValidate = await holster.SEA.encrypt(validate, user.is)
+    const encEmail = await holster.SEA.encrypt(body.email, user.is)
+    const data = {
+      ...accountDefaults,
+      pub: body.pub,
+      epub: body.epub,
+      username: body.username,
+      name: body.username,
+      email: encEmail,
+      validate: encValidate,
+      ref: login.owner,
+    }
+    let err = await new Promise(resolve => {
+      user.get("accounts").next(code).put(data, resolve)
+    })
+    if (err) {
+      console.log(err)
+      return {status: 500, message: "Host error"}
+    }
+
+    // Also map the code to the user's public key to make login easier.
+    err = await new Promise(resolve => {
+      user
+        .get("map")
+        .next("account:" + body.pub)
+        .put(code, resolve)
+    })
+    if (err) {
+      console.log(err)
+      return {status: 500, message: "Host error"}
+    }
+
+    mail.validateEmail(body.username, body.email, code, validate)
+    // Remove login code as it's no longer available.
+    err = await new Promise(resolve => {
+      user
+        .get("available")
+        .next("login_codes")
+        .next(login.key)
+        .put(null, resolve)
+    })
+    if (err) {
+      console.log(err)
+      return {status: 500, message: "Host error"}
+    }
+
+    // Ownerless (signup pool) and "admin" codes have no referring account, so
+    // there's no shared login code entry to clean up.
+    if (!login.owner || code === "admin") return null
+
+    // Also remove from shared codes of the login owner.
+    const account = await new Promise(resolve => {
+      user.get("accounts").next(login.owner, resolve)
+    })
+    if (!account || !account.epub) {
+      console.log(`Account not found for login.owner: ${login.owner}`)
+      return null
+    }
+
+    user
+      .get("shared")
+      .next("login_codes")
+      .next(login.owner, async codes => {
+        if (!codes) return
+
+        const secret = await holster.SEA.secret(account, user.is)
+        let found = false
+        for (const [key, encrypted] of Object.entries(codes)) {
+          if (found) break
+          if (!key || !encrypted) continue
+
+          const shared = await holster.SEA.decrypt(encrypted, secret)
+          if (code === shared) {
+            found = true
+            user
+              .get("shared")
+              .next("login_codes")
+              .next(login.owner)
+              .next(key)
+              .put(null, err => {
+                if (err) console.log(err)
+              })
+          }
+        }
+      })
+    return null
+  }
 
   router.get("/health", (req, res) => {
     const memUsage = process.memoryUsage()
@@ -35,6 +169,43 @@ export function createRouter(holster, loginCodes, mail, accountDefaults) {
 
     mail.requestLogin(req.body.email)
     res.send("Login code requested")
+  })
+
+  router.post("/signup", async (req, res) => {
+    if (!opts.signup) {
+      res.send("Signup is not available")
+      return
+    }
+
+    const validationError = validateRegistration(req.body)
+    if (validationError) {
+      res.status(validationError.status).send(validationError.message)
+      return
+    }
+
+    // Reserve a pool code synchronously (no await before this point) so a
+    // concurrent /signup request can't claim the same one.
+    let login
+    for (const [code, entry] of loginCodes) {
+      if (!entry.owner && code !== "admin") {
+        login = entry
+        loginCodes.delete(code)
+        break
+      }
+    }
+    if (!login) {
+      res
+        .status(503)
+        .send("Signup is not available, please try again in a few minutes")
+      return
+    }
+
+    const error = await registerAccount(login, login.code, req.body)
+    if (error) {
+      res.status(error.status).send(error.message)
+      return
+    }
+    res.end()
   })
 
   router.post("/check-codes", async (req, res) => {
@@ -86,125 +257,23 @@ export function createRouter(holster, loginCodes, mail, accountDefaults) {
       res.status(404).send("Login code not found")
       return
     }
-    if (!req.body.pub) {
-      res.status(400).send("Public key required")
-      return
-    }
-    if (!req.body.epub) {
-      res.status(400).send("Epub key required")
-      return
-    }
-    if (!req.body.username) {
-      res.status(400).send("Username required")
-      return
-    }
-    if (!/^\w+$/.test(req.body.username)) {
-      res
-        .status(400)
-        .send("Username must contain only numbers, letters and underscore")
-      return
-    }
-    if (!req.body.email) {
-      res.status(400).send("Email required")
-      return
-    }
-    if (!user.is) {
-      res.status(500).send("Host error")
+
+    const validationError = validateRegistration(req.body)
+    if (validationError) {
+      res.status(validationError.status).send(validationError.message)
       return
     }
 
-    const validate = newCode()
-    const encValidate = await holster.SEA.encrypt(validate, user.is)
-    const encEmail = await holster.SEA.encrypt(req.body.email, user.is)
-    const data = {
-      ...accountDefaults,
-      pub: req.body.pub,
-      epub: req.body.epub,
-      username: req.body.username,
-      name: req.body.username,
-      email: encEmail,
-      validate: encValidate,
-      ref: login.owner,
-    }
-    let err = await new Promise(resolve => {
-      user.get("accounts").next(code).put(data, resolve)
-    })
-    if (err) {
-      console.log(err)
-      res.status(500).send("Host error")
-      return
-    }
-
-    // Also map the code to the user's public key to make login easier.
-    err = await new Promise(resolve => {
-      user
-        .get("map")
-        .next("account:" + req.body.pub)
-        .put(code, resolve)
-    })
-    if (err) {
-      console.log(err)
-      res.status(500).send("Host error")
-      return
-    }
-
-    mail.validateEmail(req.body.username, req.body.email, code, validate)
-    // Remove login code as it's no longer available.
-    err = await new Promise(resolve => {
-      user
-        .get("available")
-        .next("login_codes")
-        .next(login.key)
-        .put(null, resolve)
-    })
-    if (err) {
-      console.log(err)
-      res.status(500).send("Host error")
-      return
-    }
-
+    // Delete synchronously (no await before this point) so a concurrent
+    // request with the same code can't also pass the loginCodes.get check
+    // above.
     loginCodes.delete(code)
-    if (code === "admin") {
-      res.end()
+
+    const error = await registerAccount(login, code, req.body)
+    if (error) {
+      res.status(error.status).send(error.message)
       return
     }
-
-    // Also remove from shared codes of the login owner.
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(login.owner, resolve)
-    })
-    if (!account || !account.epub) {
-      console.log(`Account not found for login.owner: ${login.owner}`)
-      res.end()
-      return
-    }
-
-    user
-      .get("shared")
-      .next("login_codes")
-      .next(login.owner, async codes => {
-        if (!codes) return
-
-        const secret = await holster.SEA.secret(account, user.is)
-        let found = false
-        for (const [key, encrypted] of Object.entries(codes)) {
-          if (found) break
-          if (!key || !encrypted) continue
-
-          const shared = await holster.SEA.decrypt(encrypted, secret)
-          if (code === shared) {
-            found = true
-            user
-              .get("shared")
-              .next("login_codes")
-              .next(login.owner)
-              .next(key)
-              .put(null, err => {
-                if (err) console.log(err)
-              })
-          }
-        }
-      })
     res.end()
   })
 

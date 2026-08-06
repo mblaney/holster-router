@@ -17,6 +17,60 @@ export async function checkCodes(user, loginCodes, newCodes) {
   return true
 }
 
+export async function createLoginCodes(
+  holster,
+  user,
+  loginCodes,
+  opts,
+  count,
+  owner,
+  account,
+) {
+  const newCodes = []
+  let i = 0
+  while (i++ < count) newCodes.push(newCode())
+
+  if (
+    !(await checkCodes(user, loginCodes, newCodes)) ||
+    !(await checkHosts(newCodes, opts.federatedHosts))
+  ) {
+    // If a duplicate code is found, return false and the request can be tried
+    // again. More likely that a federated host is not reachable though, so
+    // the list will need updating before making the request again.
+    return false
+  }
+
+  const secret = owner ? await holster.SEA.secret(account, user.is) : null
+  for (const code of newCodes) {
+    const login = {code, owner: owner ?? ""}
+    const enc = await holster.SEA.encrypt(login, user.is)
+    let err = await new Promise(resolve => {
+      user.get("available").next("login_codes").put(enc, true, resolve)
+    })
+    if (err) {
+      console.log(err)
+      return false
+    }
+
+    console.log("New login code available", login)
+    if (!owner) continue
+
+    const shared = await holster.SEA.encrypt(code, secret)
+    err = await new Promise(resolve => {
+      user
+        .get("shared")
+        .next("login_codes")
+        .next(owner)
+        .put(shared, true, resolve)
+    })
+    if (err) {
+      console.log(err)
+      return false
+    }
+  }
+  return true
+}
+
 export async function checkHosts(newCodes, federatedHosts) {
   // Check for a comma separated list of federated hosts that should be checked
   // for duplicate codes. Note that the other servers don't need to store the
@@ -36,7 +90,9 @@ export async function checkHosts(newCodes, federatedHosts) {
         if (!res.ok) console.log(`checkHosts ${res.status} from ${res.url}`)
         return res.ok
       } catch (error) {
-        console.log(error)
+        console.log(
+          `checkHosts ${url} unreachable: ${error.cause?.message ?? error.message}`,
+        )
         return false
       }
     }),

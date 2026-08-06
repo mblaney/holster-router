@@ -1,6 +1,6 @@
 import express from "express"
 import fs from "fs/promises"
-import {newCode, checkCodes, checkHosts} from "./utils.js"
+import {createLoginCodes} from "./utils.js"
 
 const USER_LIMIT_FILE = ".user_limit.json"
 
@@ -22,52 +22,8 @@ export async function writeUserLimit(pub, limit) {
   }
 }
 
-export function createAdmin(holster, loginCodes, mail, federatedHosts) {
+export function createAdmin(holster, loginCodes, mail, opts) {
   const user = holster.user()
-
-  async function createLoginCodes(count, owner, account) {
-    const newCodes = []
-    let i = 0
-    while (i++ < count) newCodes.push(newCode())
-
-    if (
-      !(await checkCodes(user, loginCodes, newCodes)) ||
-      !(await checkHosts(newCodes, federatedHosts))
-    ) {
-      // If a duplicate code is found, return false and the request can be tried
-      // again. More likely that a federated host is not reachable though, so
-      // the list will need updating before making the request again.
-      return false
-    }
-
-    const secret = await holster.SEA.secret(account, user.is)
-    for (const code of newCodes) {
-      const login = {code, owner}
-      const enc = await holster.SEA.encrypt(login, user.is)
-      let err = await new Promise(resolve => {
-        user.get("available").next("login_codes").put(enc, true, resolve)
-      })
-      if (err) {
-        console.log(err)
-        return false
-      }
-
-      console.log("New login code available", login)
-      const shared = await holster.SEA.encrypt(code, secret)
-      err = await new Promise(resolve => {
-        user
-          .get("shared")
-          .next("login_codes")
-          .next(owner)
-          .put(shared, true, resolve)
-      })
-      if (err) {
-        console.log(err)
-        return false
-      }
-    }
-    return true
-  }
 
   const admin = express.Router()
 
@@ -94,7 +50,17 @@ export function createAdmin(holster, loginCodes, mail, federatedHosts) {
       return
     }
 
-    if (await createLoginCodes(req.body.count || 1, code, account)) {
+    if (
+      await createLoginCodes(
+        holster,
+        user,
+        loginCodes,
+        opts,
+        req.body.count || 1,
+        code,
+        account,
+      )
+    ) {
       res.end()
       return
     }

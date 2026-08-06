@@ -50,7 +50,7 @@ export default function routerAdmin(holster, opts = {}) {
   })
 
   return {
-    router: createRouter(holster, loginCodes, mail, accountDefaults),
-    admin: createAdmin(holster, loginCodes, mail, opts.federatedHosts),
+    router: createRouter(holster, loginCodes, mail, accountDefaults, opts),
+    admin: createAdmin(holster, loginCodes, mail, opts),
   }
 }
