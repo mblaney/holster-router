@@ -1,5 +1,10 @@
 import express from "express"
-import {newCode, checkCodes, createLoginCodes} from "./utils.js"
+import {
+  newCode,
+  checkCodes,
+  createLoginCodes,
+  reshareOnMigration,
+} from "./utils.js"
 
 export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   const user = holster.user()
@@ -459,39 +464,24 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
         user
           .get("map")
           .next("account:" + req.body.pub)
-          .put(code, err => {
+          .put(code, async err => {
             if (err) {
               console.log(err)
               res.status(500).send("Host error")
               return
             }
 
-            // Also update shared login codes for this account.
-            user
-              .get("shared")
-              .next("login_codes")
-              .next(code, async codes => {
-                if (codes) {
-                  const oldSecret = await holster.SEA.secret(account, user.is)
-                  const newSecret = await holster.SEA.secret(data, user.is)
-                  for (const [key, encrypted] of Object.entries(codes)) {
-                    if (!key || !encrypted) continue
-
-                    const dec = await holster.SEA.decrypt(encrypted, oldSecret)
-                    const shared = await holster.SEA.encrypt(dec, newSecret)
-                    const err = await new Promise(resolve => {
-                      user
-                        .get("shared")
-                        .next("login_codes")
-                        .next(code)
-                        .next(key)
-                        .put(shared, resolve)
-                    })
-                    if (err) console.log(err)
-                  }
-                }
-                res.send(account.pub)
-              })
+            // A Holster password update is a migration from an old public
+            // key on the account to a new public key provided in the request.
+            await reshareOnMigration(
+              user,
+              holster,
+              opts.shared ?? ["login_codes"],
+              code,
+              account,
+              data,
+            )
+            res.send(account.pub)
           })
       })
   })

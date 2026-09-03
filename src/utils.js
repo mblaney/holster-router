@@ -71,6 +71,77 @@ export async function createLoginCodes(
   return true
 }
 
+// SEA.encrypt's own output shape - distinguishes a single encrypted value
+// sitting directly at shared/<namespace>/<code> from a container of
+// multiple such values keyed underneath it (shared/<namespace>/<code>/<key>).
+function isEncrypted(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof value.ct === "string" &&
+    typeof value.iv === "string" &&
+    typeof value.s === "string" &&
+    Object.keys(value).length === 3
+  )
+}
+
+// Re-share any data in each provided namespace for the user identified by code.
+export async function reshareOnMigration(
+  user,
+  holster,
+  namespaces,
+  code,
+  oldAccount,
+  newAccount,
+) {
+  const current = await new Promise(resolve => {
+    user.get("accounts").next(code, resolve)
+  })
+  if (
+    !current ||
+    current.pub !== newAccount.pub ||
+    current.prev !== oldAccount.pub
+  ) {
+    console.log(`reshareOnMigration: account mismatch for code ${code}`)
+    return
+  }
+
+  const oldSecret = await holster.SEA.secret(oldAccount, user.is)
+  const newSecret = await holster.SEA.secret(newAccount, user.is)
+  for (const namespace of namespaces) {
+    const shared = await new Promise(resolve => {
+      user.get("shared").next(namespace).next(code, resolve)
+    })
+    if (!shared) continue
+
+    if (isEncrypted(shared)) {
+      const dec = await holster.SEA.decrypt(shared, oldSecret)
+      const enc = await holster.SEA.encrypt(dec, newSecret)
+      const err = await new Promise(resolve => {
+        user.get("shared").next(namespace).next(code).put(enc, resolve)
+      })
+      if (err) console.log(err)
+      continue
+    }
+
+    for (const [key, encrypted] of Object.entries(shared)) {
+      if (!key || !encrypted) continue
+
+      const dec = await holster.SEA.decrypt(encrypted, oldSecret)
+      const enc = await holster.SEA.encrypt(dec, newSecret)
+      const err = await new Promise(resolve => {
+        user
+          .get("shared")
+          .next(namespace)
+          .next(code)
+          .next(key)
+          .put(enc, resolve)
+      })
+      if (err) console.log(err)
+    }
+  }
+}
+
 export async function checkHosts(newCodes, federatedHosts) {
   // Check for a comma separated list of federated hosts that should be checked
   // for duplicate codes. Note that the other servers don't need to store the

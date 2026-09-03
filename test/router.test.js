@@ -2,16 +2,11 @@ import {describe, test} from "node:test"
 import assert from "node:assert/strict"
 import fs from "fs"
 import express from "express"
-import {createTestUser as createUser} from "./setup.js"
+import {createTestUser} from "./setup.js"
 import {createRouter} from "../src/router.js"
 import {newCode} from "../src/utils.js"
 
 const dirs = []
-async function createTestUser() {
-  const result = await createUser()
-  dirs.push(result.dir)
-  return result
-}
 
 // Router tests exercise /signup and /verify-login-code's own logic
 // (validation, pool reservation, registerAccount), not createLoginCodes'
@@ -35,6 +30,9 @@ function createMailStub() {
     },
     validateEmail(...args) {
       this.calls.push(["validateEmail", ...args])
+    },
+    resetPassword(...args) {
+      this.calls.push(["resetPassword", ...args])
     },
   }
 }
@@ -74,10 +72,13 @@ function post(url, path, body) {
   })
 }
 
-function registrationBody(name) {
+// pair defaults to plain placeholder strings, fine for tests that never do
+// real ECDH with them - pass a real holster.SEA.pair() for tests that do
+// (SEA.secret needs a real WebCrypto-importable key).
+function registrationBody(name, pair) {
   return {
-    pub: `pub-${name}`,
-    epub: `epub-${name}`,
+    pub: pair?.pub ?? `pub-${name}`,
+    epub: pair?.epub ?? `epub-${name}`,
     username: name,
     email: `${name}@test.com`,
   }
@@ -85,7 +86,8 @@ function registrationBody(name) {
 
 describe("/signup", () => {
   test("responds without consuming a code when signup is disabled", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const {url} = await startTestRouter(t, {holster, user, opts: {}})
 
     const res = await post(url, "/signup", registrationBody("alice"))
@@ -93,7 +95,8 @@ describe("/signup", () => {
   })
 
   test("returns 400 and leaves the pool untouched on invalid input", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const loginCodes = createLoginCodes()
     const [code] = loginCodes.keys()
     const {url} = await startTestRouter(t, {
@@ -116,7 +119,8 @@ describe("/signup", () => {
   })
 
   test("returns 503 when the pool is empty", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const {url} = await startTestRouter(t, {
       holster,
       user,
@@ -128,7 +132,8 @@ describe("/signup", () => {
   })
 
   test("does not hand out the admin code", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const loginCodes = new Map([["admin", {code: "admin", owner: ""}]])
     const {url} = await startTestRouter(t, {
       holster,
@@ -142,7 +147,8 @@ describe("/signup", () => {
   })
 
   test("registers an account and sends a validation email", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const loginCodes = createLoginCodes()
     const [code] = loginCodes.keys()
     const {url, mail} = await startTestRouter(t, {
@@ -167,7 +173,8 @@ describe("/signup", () => {
   })
 
   test("concurrent requests can't both claim the same code", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const loginCodes = createLoginCodes()
     const {url} = await startTestRouter(t, {
       holster,
@@ -191,7 +198,8 @@ describe("/signup", () => {
 
 describe("/verify-login-code", () => {
   test("returns 404 for an unknown code", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const {url} = await startTestRouter(t, {holster, user})
 
     const res = await post(url, "/verify-login-code", {
@@ -202,7 +210,8 @@ describe("/verify-login-code", () => {
   })
 
   test("returns 400 and leaves the code claimable on invalid input", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const loginCodes = createLoginCodes()
     const [code] = loginCodes.keys()
     const {url} = await startTestRouter(t, {holster, user, loginCodes})
@@ -222,7 +231,8 @@ describe("/verify-login-code", () => {
   })
 
   test("registers an account for the given code", async t => {
-    const {holster, user} = await createTestUser()
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
     const loginCodes = createLoginCodes()
     const [code] = loginCodes.keys()
     const {url, mail} = await startTestRouter(t, {holster, user, loginCodes})
@@ -239,6 +249,133 @@ describe("/verify-login-code", () => {
     assert.equal(account.pub, "pub-alice")
     assert.equal(mail.calls[0][0], "validateEmail")
     assert.equal(loginCodes.has(code), false)
+  })
+})
+
+describe("/update-password", () => {
+  async function registerAndValidate(holster, url, mail, loginCodes, name) {
+    const [code] = loginCodes.keys()
+    const pair = await holster.SEA.pair()
+    const body = registrationBody(name, pair)
+    await post(url, "/verify-login-code", {code, ...body})
+    const validateCall = mail.calls.find(call => call[0] === "validateEmail")
+    await post(url, "/validate-email", {code, validate: validateCall[4]})
+    return {code, pub: body.pub, epub: body.epub}
+  }
+
+  async function requestReset(url, mail, code, email) {
+    await post(url, "/reset-password", {code, email})
+    const resetCall = mail.calls.find(
+      call => call[0] === "resetPassword" && call[4] === code,
+    )
+    return resetCall[5]
+  }
+
+  test("updates the account's pub/epub and re-shares its login_codes entries", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const loginCodes = createLoginCodes()
+    const {url, mail} = await startTestRouter(t, {holster, user, loginCodes})
+
+    const {code, pub, epub} = await registerAndValidate(
+      holster,
+      url,
+      mail,
+      loginCodes,
+      "alice",
+    )
+
+    // Seed a shared login-code entry the way createLoginCodes would,
+    // encrypted for alice's current (about-to-be-old) key.
+    const oldSecret = await holster.SEA.secret({pub, epub}, user.is)
+    const enc = await holster.SEA.encrypt("shared-code", oldSecret)
+    await new Promise(resolve => {
+      user.get("shared").next("login_codes").next(code).put(enc, true, resolve)
+    })
+
+    const reset = await requestReset(url, mail, code, "alice@test.com")
+    const newPair = await holster.SEA.pair()
+    const newBody = registrationBody("alice-new", newPair)
+    const res = await post(url, "/update-password", {
+      code,
+      reset,
+      pub: newBody.pub,
+      epub: newBody.epub,
+      username: "alice",
+      name: "Alice",
+    })
+    assert.equal(res.status, 200)
+
+    const account = await new Promise(resolve => {
+      user.get("accounts").next(code, resolve)
+    })
+    assert.equal(account.pub, newBody.pub)
+    assert.equal(account.prev, pub)
+
+    const shared = await new Promise(resolve => {
+      user.get("shared").next("login_codes").next(code, resolve)
+    })
+    const [sharedEnc] = Object.values(shared)
+    const newSecret = await holster.SEA.secret(
+      {pub: newBody.pub, epub: newBody.epub},
+      user.is,
+    )
+    assert.equal(await holster.SEA.decrypt(sharedEnc, newSecret), "shared-code")
+  })
+
+  test("also re-shares any additional namespace passed via opts.shared", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const loginCodes = createLoginCodes()
+    const {url, mail} = await startTestRouter(t, {
+      holster,
+      user,
+      loginCodes,
+      opts: {shared: ["login_codes", "pending_subdomains"]},
+    })
+
+    const {code, pub, epub} = await registerAndValidate(
+      holster,
+      url,
+      mail,
+      loginCodes,
+      "alice",
+    )
+
+    const oldSecret = await holster.SEA.secret({pub, epub}, user.is)
+    const enc = await holster.SEA.encrypt("pending-request", oldSecret)
+    await new Promise(resolve => {
+      user
+        .get("shared")
+        .next("pending_subdomains")
+        .next(code)
+        .put(enc, true, resolve)
+    })
+
+    const reset = await requestReset(url, mail, code, "alice@test.com")
+    const newPair = await holster.SEA.pair()
+    const newBody = registrationBody("alice-new", newPair)
+    await post(url, "/update-password", {
+      code,
+      reset,
+      pub: newBody.pub,
+      epub: newBody.epub,
+      username: "alice",
+      name: "Alice",
+    })
+
+    const shared = await new Promise(resolve => {
+      user.get("shared").next("pending_subdomains").next(code, resolve)
+    })
+    const [sharedEnc] = Object.values(shared)
+    const newSecret = await holster.SEA.secret(
+      {pub: newBody.pub, epub: newBody.epub},
+      user.is,
+    )
+    assert.equal(
+      await holster.SEA.decrypt(sharedEnc, newSecret),
+      "pending-request",
+    )
   })
 })
 

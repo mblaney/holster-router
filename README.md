@@ -44,18 +44,20 @@ app.listen(3000)
 
 `routerAdmin` accepts an options object as a second parameter:
 
-| Option                | Description                                                                                                                                               |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `username`            | Host account username (default: `host`)                                                                                                                   |
-| `password`            | Host account password (default: `password`)                                                                                                               |
-| `hostStorageLimit`    | Storage limit in MB written to `.user_limit.json` on startup (default: `1024`)                                                                            |
-| `appHost`             | Server URL used in email links and stored on account data (default: `http://localhost:3000`)                                                              |
-| `mailFrom`            | Sender address for outgoing email. If not set, email content is logged instead                                                                            |
-| `mailBcc`             | BCC address copied on outgoing login code request emails                                                                                                  |
-| `federatedHosts`      | Comma-separated list of other holster-router servers to check for duplicate login codes                                                                   |
-| `accountDefaults`     | An object merged into account data when an login code is claimed. Use this to set app-specific fields on new accounts (e.g. `{feeds: 10, subscribed: 0}`) |
-| `signup`              | Enables `POST /signup` for direct, one-step account registration (default: disabled)                                                                      |
-| `availableLoginCodes` | Target size of the pool of login codes kept available for `/signup` (default: `10`)                                                                       |
+| Option                | Description                                                                                                                                                                                                                                               |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `username`            | Host account username (default: `host`)                                                                                                                                                                                                                   |
+| `password`            | Host account password (default: `password`)                                                                                                                                                                                                               |
+| `hostStorageLimit`    | Storage limit in MB written to `.user_limit.json` on startup (default: `1024`)                                                                                                                                                                            |
+| `appHost`             | Server URL used in email links and stored on account data (default: `http://localhost:3000`)                                                                                                                                                              |
+| `mailFrom`            | Sender address for outgoing email. If not set, email content is logged instead                                                                                                                                                                            |
+| `mailBcc`             | BCC address copied on outgoing login code request emails                                                                                                                                                                                                  |
+| `federatedHosts`      | Comma-separated list of other holster-router servers to check for duplicate login codes                                                                                                                                                                   |
+| `accountDefaults`     | An object merged into account data when an login code is claimed. Use this to set app-specific fields on new accounts (e.g. `{feeds: 10, subscribed: 0}`)                                                                                                 |
+| `signup`              | Enables `POST /signup` for direct, one-step account registration (default: disabled)                                                                                                                                                                      |
+| `availableLoginCodes` | Target size of the pool of login codes kept available for `/signup` (default: `10`)                                                                                                                                                                       |
+| `authenticated`       | Called once the host account has logged in. Use this to safely do your own setup against the host's Holster data (e.g. `holster.user()`) that would otherwise race the login                                                                              |
+| `shared`              | Namespaces under `shared/<namespace>/<code>` to re-encrypt when `POST /update-password` migrates an account to a new key pair (default: `["login_codes"]`). Add your own namespace here if your app writes other data under `shared/` keyed by login code |
 
 ### Setup: creating a host account
 

@@ -46,6 +46,7 @@ export default function routerAdmin(holster, opts = {}) {
       console.log(username + " logged in")
       mapLoginCodes()
       await writeUserLimit(user.is.pub, hostStorageLimit)
+      opts.authenticated?.()
     }
   })
 
