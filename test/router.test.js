@@ -72,16 +72,20 @@ function post(url, path, body) {
   })
 }
 
-// pair defaults to plain placeholder strings, fine for tests that never do
-// real ECDH with them - pass a real holster.SEA.pair() for tests that do
-// (SEA.secret needs a real WebCrypto-importable key).
-function registrationBody(name, pair) {
-  return {
-    pub: pair?.pub ?? `pub-${name}`,
-    epub: pair?.epub ?? `epub-${name}`,
-    username: name,
-    email: `${name}@test.com`,
-  }
+// A real signed request, since the server now verifies it against the
+// claimed pub. Pass an existing pair for tests that need to reuse or
+// later reference the same keys (e.g. SEA.secret elsewhere).
+async function signedBody(
+  holster,
+  {username = "alice", email = `${username}@example.com`, timestamp} = {},
+  pair,
+) {
+  const keys = pair ?? (await holster.SEA.pair())
+  const signed = await holster.SEA.sign(
+    {username, email, timestamp: timestamp ?? Date.now()},
+    keys,
+  )
+  return {pub: keys.pub, epub: keys.epub, signed}
 }
 
 describe("/signup", () => {
@@ -90,7 +94,7 @@ describe("/signup", () => {
     dirs.push(dir)
     const {url} = await startTestRouter(t, {holster, user, opts: {}})
 
-    const res = await post(url, "/signup", registrationBody("alice"))
+    const res = await post(url, "/signup", await signedBody(holster))
     assert.equal(await res.text(), "Signup is not available")
   })
 
@@ -106,14 +110,15 @@ describe("/signup", () => {
       opts: {signup: true},
     })
 
-    const bad = await post(url, "/signup", {
-      ...registrationBody("alice"),
-      username: "",
-    })
+    const bad = await post(
+      url,
+      "/signup",
+      await signedBody(holster, {username: "", email: "alice@example.com"}),
+    )
     assert.equal(bad.status, 400)
 
     // The pool code should still be there for a valid request.
-    const good = await post(url, "/signup", registrationBody("alice"))
+    const good = await post(url, "/signup", await signedBody(holster))
     assert.equal(good.status, 200)
     assert.equal(loginCodes.has(code), false)
   })
@@ -127,7 +132,7 @@ describe("/signup", () => {
       opts: {signup: true},
     })
 
-    const res = await post(url, "/signup", registrationBody("alice"))
+    const res = await post(url, "/signup", await signedBody(holster))
     assert.equal(res.status, 503)
   })
 
@@ -142,7 +147,7 @@ describe("/signup", () => {
       opts: {signup: true},
     })
 
-    const res = await post(url, "/signup", registrationBody("alice"))
+    const res = await post(url, "/signup", await signedBody(holster))
     assert.equal(res.status, 503)
   })
 
@@ -158,13 +163,14 @@ describe("/signup", () => {
       opts: {signup: true},
     })
 
-    const res = await post(url, "/signup", registrationBody("alice"))
+    const body = await signedBody(holster)
+    const res = await post(url, "/signup", body)
     assert.equal(res.status, 200)
 
     const account = await new Promise(resolve => {
       user.get("accounts").next(code, resolve)
     })
-    assert.equal(account.pub, "pub-alice")
+    assert.equal(account.pub, body.pub)
     assert.equal(account.username, "alice")
 
     assert.equal(mail.calls.length, 1)
@@ -188,11 +194,123 @@ describe("/signup", () => {
     // see the same unclaimed code and both succeed. No storage read-back
     // here, since holster is eventually consistent and a read straight
     // after a write isn't guaranteed to reflect it yet.
+    const [bodyA, bodyB] = await Promise.all([
+      signedBody(holster),
+      signedBody(holster, {username: "bob"}),
+    ])
     const [resA, resB] = await Promise.all([
-      post(url, "/signup", registrationBody("alice")),
-      post(url, "/signup", registrationBody("bob")),
+      post(url, "/signup", bodyA),
+      post(url, "/signup", bodyB),
     ])
     assert.deepEqual([resA.status, resB.status].sort(), [200, 503])
+  })
+
+  test("rate limits repeated attempts from the same caller", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const loginCodes = createLoginCodes(10)
+    const {url} = await startTestRouter(t, {
+      holster,
+      user,
+      loginCodes,
+      opts: {signup: true},
+    })
+
+    const statuses = []
+    for (let i = 0; i < 6; i++) {
+      const res = await post(
+        url,
+        "/signup",
+        await signedBody(holster, {username: `user${i}`}),
+      )
+      statuses.push(res.status)
+    }
+    assert.deepEqual(statuses, [200, 200, 200, 200, 200, 429])
+  })
+
+  test("rejects a request signed by a different key than the one claimed", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const loginCodes = createLoginCodes()
+    const {url} = await startTestRouter(t, {
+      holster,
+      user,
+      loginCodes,
+      opts: {signup: true},
+    })
+
+    const body = await signedBody(holster)
+    const otherPair = await holster.SEA.pair()
+    const res = await post(url, "/signup", {...body, pub: otherPair.pub})
+    assert.equal(res.status, 400)
+    assert.equal(await res.text(), "Invalid request")
+  })
+
+  test("rejects a signed request whose timestamp has expired", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const loginCodes = createLoginCodes()
+    const {url} = await startTestRouter(t, {
+      holster,
+      user,
+      loginCodes,
+      opts: {signup: true},
+    })
+
+    const body = await signedBody(holster, {
+      timestamp: Date.now() - 10 * 60000,
+    })
+    const res = await post(url, "/signup", body)
+    assert.equal(res.status, 400)
+    assert.equal(await res.text(), "Request expired")
+  })
+})
+
+describe("/request-login-code", () => {
+  test("requests a login code for a valid email", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const {url, mail} = await startTestRouter(t, {holster, user})
+
+    const res = await post(url, "/request-login-code", {
+      email: "alice@example.com",
+    })
+    assert.equal(res.status, 200)
+    assert.equal(mail.calls.length, 1)
+    assert.deepEqual(mail.calls[0], ["requestLogin", "alice@example.com"])
+  })
+
+  test("rate limits repeated requests for the same email", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const {url, mail} = await startTestRouter(t, {holster, user})
+
+    const first = await post(url, "/request-login-code", {
+      email: "alice@example.com",
+    })
+    assert.equal(first.status, 200)
+
+    const second = await post(url, "/request-login-code", {
+      email: "alice@example.com",
+    })
+    assert.equal(second.status, 429)
+    assert.equal(mail.calls.length, 1)
+  })
+
+  test("rate limits repeated requests from the same caller, even for different emails", async t => {
+    const {holster, user, dir} = await createTestUser()
+    dirs.push(dir)
+    const {url, mail} = await startTestRouter(t, {holster, user})
+
+    const statuses = []
+    for (let i = 0; i < 6; i++) {
+      const res = await post(url, "/request-login-code", {
+        email: `user${i}@example.com`,
+      })
+      statuses.push(res.status)
+    }
+    assert.deepEqual(statuses, [200, 200, 200, 200, 200, 429])
+    assert.equal(mail.calls.length, 5)
   })
 })
 
@@ -204,7 +322,7 @@ describe("/verify-login-code", () => {
 
     const res = await post(url, "/verify-login-code", {
       code: "missing",
-      ...registrationBody("alice"),
+      ...(await signedBody(holster)),
     })
     assert.equal(res.status, 404)
   })
@@ -218,14 +336,16 @@ describe("/verify-login-code", () => {
 
     const bad = await post(url, "/verify-login-code", {
       code,
-      ...registrationBody("alice"),
-      username: "",
+      ...(await signedBody(holster, {
+        username: "",
+        email: "alice@example.com",
+      })),
     })
     assert.equal(bad.status, 400)
 
     const good = await post(url, "/verify-login-code", {
       code,
-      ...registrationBody("alice"),
+      ...(await signedBody(holster)),
     })
     assert.equal(good.status, 200)
   })
@@ -237,16 +357,14 @@ describe("/verify-login-code", () => {
     const [code] = loginCodes.keys()
     const {url, mail} = await startTestRouter(t, {holster, user, loginCodes})
 
-    const res = await post(url, "/verify-login-code", {
-      code,
-      ...registrationBody("alice"),
-    })
+    const body = await signedBody(holster)
+    const res = await post(url, "/verify-login-code", {code, ...body})
     assert.equal(res.status, 200)
 
     const account = await new Promise(resolve => {
       user.get("accounts").next(code, resolve)
     })
-    assert.equal(account.pub, "pub-alice")
+    assert.equal(account.pub, body.pub)
     assert.equal(mail.calls[0][0], "validateEmail")
     assert.equal(loginCodes.has(code), false)
   })
@@ -256,7 +374,7 @@ describe("/update-password", () => {
   async function registerAndValidate(holster, url, mail, loginCodes, name) {
     const [code] = loginCodes.keys()
     const pair = await holster.SEA.pair()
-    const body = registrationBody(name, pair)
+    const body = await signedBody(holster, {username: name}, pair)
     await post(url, "/verify-login-code", {code, ...body})
     const validateCall = mail.calls.find(call => call[0] === "validateEmail")
     await post(url, "/validate-email", {code, validate: validateCall[4]})
@@ -293,9 +411,9 @@ describe("/update-password", () => {
       user.get("shared").next("login_codes").next(code).put(enc, true, resolve)
     })
 
-    const reset = await requestReset(url, mail, code, "alice@test.com")
+    const reset = await requestReset(url, mail, code, "alice@example.com")
     const newPair = await holster.SEA.pair()
-    const newBody = registrationBody("alice-new", newPair)
+    const newBody = await signedBody(holster, {username: "alice-new"}, newPair)
     const res = await post(url, "/update-password", {
       code,
       reset,
@@ -311,6 +429,20 @@ describe("/update-password", () => {
     })
     assert.equal(account.pub, newBody.pub)
     assert.equal(account.prev, pub)
+    // The reset code is single-use - a successful update clears it so the
+    // same emailed link can't be replayed later.
+    assert.equal(account.reset, null)
+    assert.equal(account.expiry, null)
+
+    // The old pub's map entry is superseded, not left dangling.
+    const oldMapping = await new Promise(resolve => {
+      user.get("map").next("account:" + pub, resolve)
+    })
+    assert.equal(oldMapping, null)
+    const newMapping = await new Promise(resolve => {
+      user.get("map").next("account:" + newBody.pub, resolve)
+    })
+    assert.equal(newMapping, code)
 
     const shared = await new Promise(resolve => {
       user.get("shared").next("login_codes").next(code, resolve)
@@ -352,9 +484,9 @@ describe("/update-password", () => {
         .put(enc, true, resolve)
     })
 
-    const reset = await requestReset(url, mail, code, "alice@test.com")
+    const reset = await requestReset(url, mail, code, "alice@example.com")
     const newPair = await holster.SEA.pair()
-    const newBody = registrationBody("alice-new", newPair)
+    const newBody = await signedBody(holster, {username: "alice-new"}, newPair)
     await post(url, "/update-password", {
       code,
       reset,

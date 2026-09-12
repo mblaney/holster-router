@@ -3,12 +3,18 @@ import {
   newCode,
   checkCodes,
   createLoginCodes,
+  createRateLimiter,
   reshareOnMigration,
 } from "./utils.js"
 
 export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   const user = holster.user()
   const router = express.Router()
+
+  const REQUEST_WINDOW_MS = 5 * 60000
+  const emailLimiter = createRateLimiter(REQUEST_WINDOW_MS, 1)
+  const ipLimiter = createRateLimiter(REQUEST_WINDOW_MS, 5)
+  const REQUEST_FRESHNESS_MS = 5 * 60000
 
   function signupPoolSize() {
     let count = 0
@@ -32,18 +38,44 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
     interval.unref()
   }
 
-  function validateRegistration(body) {
-    if (!body.pub) return {status: 400, message: "Public key required"}
-    if (!body.epub) return {status: 400, message: "Epub key required"}
-    if (!body.username) return {status: 400, message: "Username required"}
-    if (!/^\w+$/.test(body.username)) {
+  // Verifies the request was signed by the private key matching the
+  // claimed pub, proving the caller actually holds it - there's no
+  // existing account yet to fetch a trusted pub from at registration, so
+  // this checks against whatever pub the request itself claims. Returns
+  // {error: {status, message}} or the full data registerAccount needs:
+  // {pub, epub, username, email}.
+  async function validateRegistration(body) {
+    if (!body.pub) return {error: {status: 400, message: "Public key required"}}
+    if (!body.epub) return {error: {status: 400, message: "Epub key required"}}
+    if (!body.signed) {
+      return {error: {status: 400, message: "Signed request required"}}
+    }
+
+    const data = await holster.SEA.verify(body.signed, {pub: body.pub})
+    if (!data || typeof data.timestamp !== "number") {
+      return {error: {status: 400, message: "Invalid request"}}
+    }
+    if (Math.abs(Date.now() - data.timestamp) > REQUEST_FRESHNESS_MS) {
+      return {error: {status: 400, message: "Request expired"}}
+    }
+    if (!data.username) {
+      return {error: {status: 400, message: "Username required"}}
+    }
+    if (!/^\w+$/.test(data.username)) {
       return {
-        status: 400,
-        message: "Username must contain only numbers, letters and underscore",
+        error: {
+          status: 400,
+          message: "Username must contain only numbers, letters and underscore",
+        },
       }
     }
-    if (!body.email) return {status: 400, message: "Email required"}
-    return null
+    if (!data.email) return {error: {status: 400, message: "Email required"}}
+    return {
+      pub: body.pub,
+      epub: body.epub,
+      username: data.username,
+      email: data.email,
+    }
   }
 
   // Creates an account for a claimed login code, used by both
@@ -167,8 +199,18 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   })
 
   router.post("/request-login-code", (req, res) => {
+    // The waitlist and open-signup flows are mutually exclusive.
+    if (opts.signup) {
+      res.send("Signup is open, no login code needed")
+      return
+    }
     if (!req.body.email) {
       res.status(400).send("email required")
+      return
+    }
+    // Limits both the target email and the caller's IP.
+    if (!emailLimiter(req.body.email) || !ipLimiter(req.ip)) {
+      res.status(429).send("Too many requests, please try again later")
       return
     }
 
@@ -181,10 +223,14 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       res.send("Signup is not available")
       return
     }
+    if (!ipLimiter(req.ip)) {
+      res.status(429).send("Too many requests, please try again later")
+      return
+    }
 
-    const validationError = validateRegistration(req.body)
-    if (validationError) {
-      res.status(validationError.status).send(validationError.message)
+    const validated = await validateRegistration(req.body)
+    if (validated.error) {
+      res.status(validated.error.status).send(validated.error.message)
       return
     }
 
@@ -205,7 +251,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       return
     }
 
-    const error = await registerAccount(login, login.code, req.body)
+    const error = await registerAccount(login, login.code, validated)
     if (error) {
       res.status(error.status).send(error.message)
       return
@@ -257,24 +303,23 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
 
   router.post("/verify-login-code", async (req, res) => {
     const code = req.body.code || "admin"
+
+    const validated = await validateRegistration(req.body)
+    if (validated.error) {
+      res.status(validated.error.status).send(validated.error.message)
+      return
+    }
+
+    // Reserve synchronously (no await before this point) so a concurrent
+    // request with the same code can't also pass the get check below.
     const login = loginCodes.get(code)
     if (!login) {
       res.status(404).send("Login code not found")
       return
     }
-
-    const validationError = validateRegistration(req.body)
-    if (validationError) {
-      res.status(validationError.status).send(validationError.message)
-      return
-    }
-
-    // Delete synchronously (no await before this point) so a concurrent
-    // request with the same code can't also pass the loginCodes.get check
-    // above.
     loginCodes.delete(code)
 
-    const error = await registerAccount(login, code, req.body)
+    const error = await registerAccount(login, code, validated)
     if (error) {
       res.status(error.status).send(error.message)
       return
@@ -450,6 +495,11 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       username: req.body.username,
       name: req.body.name,
       prev: account.pub,
+      // The reset code is single-use - without clearing these, the same
+      // emailed link stays replayable for the rest of its 24 hour expiry
+      // window even after already being used to update the password once.
+      reset: null,
+      expiry: null,
     }
     user
       .get("accounts")
@@ -470,6 +520,15 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
               res.status(500).send("Host error")
               return
             }
+
+            // The old pub's mapping is now superseded - clear it so it
+            // doesn't accumulate forever across repeated password resets.
+            user
+              .get("map")
+              .next("account:" + account.pub)
+              .put(null, err => {
+                if (err) console.log(err)
+              })
 
             // A Holster password update is a migration from an old public
             // key on the account to a new public key provided in the request.

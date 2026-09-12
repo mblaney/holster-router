@@ -1,3 +1,17 @@
+// A sliding-window rate limiter, keyed by whatever string the caller
+// passes in (an email, an IP, etc).
+export function createRateLimiter(windowMs, max) {
+  const hits = new Map() // Map<key, timestamps[]>
+  return key => {
+    const now = Date.now()
+    const recent = (hits.get(key) || []).filter(t => now - t < windowMs)
+    if (recent.length >= max) return false
+    recent.push(now)
+    hits.set(key, recent)
+    return true
+  }
+}
+
 export function newCode() {
   const chars = "bcdfghjkmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ123456789"
   let code = ""

@@ -35,6 +35,14 @@ function basicAuth(req, res, next) {
 }
 
 const app = express()
+// Required if this app runs behind a reverse proxy (nginx, Apache, a CDN):
+// POST /request-login-code and POST /signup rate-limit by req.ip, which
+// otherwise resolves to the proxy's own address for every request rather
+// than the real caller. The number is how many proxy hops to trust. Set
+// to 1 for a single reverse proxy directly in front of this app; see
+// https://expressjs.com/en/guide/behind-proxies.html for anything more
+// than that. Omit this line entirely if there's no proxy at all.
+app.set("trust proxy", 1)
 app.use(express.json())
 app.use(router)
 app.use("/private", basicAuth)
