@@ -28,7 +28,7 @@ export function createAdmin(holster, loginCodes, mail, opts) {
   const admin = express.Router()
 
   admin.post("/create-login-codes", async (req, res) => {
-    const code = req.body.code
+    const code = req.body?.code
     if (!code) {
       res.status(400).send("code required")
       return
@@ -56,7 +56,7 @@ export function createAdmin(holster, loginCodes, mail, opts) {
         user,
         loginCodes,
         opts,
-        req.body.count || 1,
+        req.body?.count || 1,
         code,
         account,
       )
@@ -71,12 +71,12 @@ export function createAdmin(holster, loginCodes, mail, opts) {
   })
 
   admin.post("/send-login-code", (req, res) => {
-    const code = req.body.code
+    const code = req.body?.code
     if (!code) {
       res.status(400).send("code required")
       return
     }
-    const email = req.body.email
+    const email = req.body?.email
     if (!email) {
       res.status(400).send("email required")
       return
@@ -86,12 +86,12 @@ export function createAdmin(holster, loginCodes, mail, opts) {
   })
 
   admin.post("/update-storage-limit", async (req, res) => {
-    const code = req.body.code
+    const code = req.body?.code
     if (!code) {
       res.status(400).send("code required")
       return
     }
-    const limit = req.body.limit
+    const limit = req.body?.limit
     if (typeof limit !== "number") {
       res.status(400).send("limit required")
       return

@@ -44,7 +44,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   // this checks against whatever pub the request itself claims. Returns
   // {error: {status, message}} or the full data registerAccount needs:
   // {pub, epub, username, email}.
-  async function validateRegistration(body) {
+  async function validateRegistration(body = {}) {
     if (!body.pub) return {error: {status: 400, message: "Public key required"}}
     if (!body.epub) return {error: {status: 400, message: "Epub key required"}}
     if (!body.signed) {
@@ -204,17 +204,18 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       res.send("Signup is open, no login code needed")
       return
     }
-    if (!req.body.email) {
+    const email = req.body?.email
+    if (!email) {
       res.status(400).send("email required")
       return
     }
     // Limits both the target email and the caller's IP.
-    if (!emailLimiter(req.body.email) || !ipLimiter(req.ip)) {
+    if (!emailLimiter(email) || !ipLimiter(req.ip)) {
       res.status(429).send("Too many requests, please try again later")
       return
     }
 
-    mail.requestLogin(req.body.email)
+    mail.requestLogin(email)
     res.send("Login code requested")
   })
 
@@ -260,7 +261,8 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   })
 
   router.post("/check-codes", async (req, res) => {
-    if (!req.body.codes || req.body.codes.length === 0) {
+    const codes = req.body?.codes
+    if (!codes || codes.length === 0) {
       res.status(400).send("codes required")
       return
     }
@@ -268,7 +270,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       res.status(500).send("Host error")
       return
     }
-    if (await checkCodes(user, loginCodes, req.body.codes)) {
+    if (await checkCodes(user, loginCodes, codes)) {
       res.end() // ok
       return
     }
@@ -277,7 +279,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   })
 
   router.post("/check-login-code", (req, res) => {
-    const code = req.body.code || "admin"
+    const code = req.body?.code || "admin"
     if (loginCodes.has(code)) {
       res.end() // ok
       return
@@ -302,7 +304,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   })
 
   router.post("/verify-login-code", async (req, res) => {
-    const code = req.body.code || "admin"
+    const code = req.body?.code || "admin"
 
     const validated = await validateRegistration(req.body)
     if (validated.error) {
@@ -328,12 +330,13 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   })
 
   router.post("/validate-email", async (req, res) => {
-    const code = req.body.code
+    const code = req.body?.code
+    const validateCode = req.body?.validate
     if (!code) {
       res.status(400).send("Login code required")
       return
     }
-    if (!req.body.validate) {
+    if (!validateCode) {
       res.status(400).send("Validation code required")
       return
     }
@@ -355,7 +358,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
     }
 
     const validate = await holster.SEA.decrypt(account.validate, user.is)
-    if (validate !== req.body.validate) {
+    if (validate !== validateCode) {
       res.status(400).send("Validation code does not match")
       return
     }
@@ -375,12 +378,13 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   })
 
   router.post("/reset-password", async (req, res) => {
-    const code = req.body.code
+    const code = req.body?.code
+    const providedEmail = req.body?.email
     if (!code) {
       res.status(400).send("Login code required")
       return
     }
-    if (!req.body.email) {
+    if (!providedEmail) {
       res.status(400).send("Email required")
       return
     }
@@ -406,7 +410,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
     }
 
     const email = await holster.SEA.decrypt(account.email, user.is)
-    if (email !== req.body.email) {
+    if (email !== providedEmail) {
       res.status(400).send("Email does not match login code")
       return
     }
@@ -437,28 +441,33 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
   })
 
   router.post("/update-password", async (req, res) => {
-    const code = req.body.code
+    const code = req.body?.code
+    const providedReset = req.body?.reset
+    const pub = req.body?.pub
+    const epub = req.body?.epub
+    const username = req.body?.username
+    const name = req.body?.name
     if (!code) {
       res.status(400).send("Login code required")
       return
     }
-    if (!req.body.reset) {
+    if (!providedReset) {
       res.status(400).send("Reset code required")
       return
     }
-    if (!req.body.pub) {
+    if (!pub) {
       res.status(400).send("Public key required")
       return
     }
-    if (!req.body.epub) {
+    if (!epub) {
       res.status(400).send("Epub key required")
       return
     }
-    if (!req.body.username) {
+    if (!username) {
       res.status(400).send("Username required")
       return
     }
-    if (!req.body.name) {
+    if (!name) {
       res.status(400).send("Display Name required")
       return
     }
@@ -484,16 +493,16 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
     }
 
     const reset = await holster.SEA.decrypt(account.reset, user.is)
-    if (reset !== req.body.reset) {
+    if (reset !== providedReset) {
       res.status(400).send("Reset code does not match")
       return
     }
 
     const data = {
-      pub: req.body.pub,
-      epub: req.body.epub,
-      username: req.body.username,
-      name: req.body.name,
+      pub,
+      epub,
+      username,
+      name,
       prev: account.pub,
       // The reset code is single-use - without clearing these, the same
       // emailed link stays replayable for the rest of its 24 hour expiry
@@ -513,7 +522,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
 
         user
           .get("map")
-          .next("account:" + req.body.pub)
+          .next("account:" + pub)
           .put(code, async err => {
             if (err) {
               console.log(err)

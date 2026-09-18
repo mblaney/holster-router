@@ -2,6 +2,17 @@ import {createRouter} from "./router.js"
 import {createAdmin, writeUserLimit} from "./admin.js"
 import {createMail} from "./mail.js"
 
+// Defense in depth for errors outside any request entirely (background
+// timers, startup code) - e.g. mapLoginCodes()'s own .on() listener
+// below, or a consuming app's periodic tasks. Registered once here since
+// routerAdmin() is the one entry point every consumer already calls.
+process.on("unhandledRejection", err => {
+  console.error("Unhandled rejection:", err)
+})
+process.on("uncaughtException", err => {
+  console.error("Uncaught exception:", err)
+})
+
 export default function routerAdmin(holster, opts = {}) {
   const username = opts.username ?? "host"
   const password = opts.password ?? "password"
@@ -53,5 +64,6 @@ export default function routerAdmin(holster, opts = {}) {
   return {
     router: createRouter(holster, loginCodes, mail, accountDefaults, opts),
     admin: createAdmin(holster, loginCodes, mail, opts),
+    utils: {mail: mail.send, writeUserLimit},
   }
 }

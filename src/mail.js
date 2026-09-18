@@ -61,5 +61,5 @@ ${remaining <= 5 ? `Note that you can only reset your password ${remaining} more
     send(email, "Update your password", message)
   }
 
-  return {requestLogin, sendLoginCode, validateEmail, resetPassword}
+  return {send, requestLogin, sendLoginCode, validateEmail, resetPassword}
 }
