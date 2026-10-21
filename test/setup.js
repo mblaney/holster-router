@@ -48,9 +48,7 @@ export async function createTestUser() {
  */
 export async function loadLoginCodes(holster, user) {
   const loginCodes = new Map()
-  const codes = await new Promise(resolve => {
-    user.get("available").next("login_codes", resolve)
-  })
+  const codes = await user.get("available").next("login_codes")
   if (!codes) return loginCodes
 
   for (const [key, enc] of Object.entries(codes)) {

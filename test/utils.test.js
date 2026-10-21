@@ -22,9 +22,7 @@ describe("checkCodes", () => {
     const {user, dir} = await createTestUser()
     dirs.push(dir)
     const code = newCode()
-    await new Promise(resolve =>
-      user.get("accounts").next(code).put({pub: "test"}, resolve),
-    )
+    await user.get("accounts").next(code).put({pub: "test"})
     assert.equal(await checkCodes(user, new Map(), [code]), false)
   })
 
@@ -40,9 +38,7 @@ describe("checkCodes", () => {
     const {user, dir} = await createTestUser()
     dirs.push(dir)
     const existing = newCode()
-    await new Promise(resolve =>
-      user.get("accounts").next(existing).put({pub: "test"}, resolve),
-    )
+    await user.get("accounts").next(existing).put({pub: "test"})
     assert.equal(
       await checkCodes(user, new Map(), [newCode(), existing, newCode()]),
       false,
@@ -67,9 +63,7 @@ describe("createLoginCodes", () => {
     dirs.push(dir)
     await createLoginCodes(holster, user, new Map(), {}, 1)
 
-    const shared = await new Promise(resolve => {
-      user.get("shared").next("login_codes", resolve)
-    })
+    const shared = await user.get("shared").next("login_codes")
     assert.ok(!shared)
   })
 
@@ -93,9 +87,7 @@ describe("createLoginCodes", () => {
     assert.equal(loginCodes.size, 2)
     for (const login of loginCodes.values()) assert.equal(login.owner, owner)
 
-    const shared = await new Promise(resolve => {
-      user.get("shared").next("login_codes").next(owner, resolve)
-    })
+    const shared = await user.get("shared").next("login_codes").next(owner)
     assert.equal(Object.keys(shared || {}).length, 2)
   })
 
@@ -129,19 +121,15 @@ describe("reshareOnMigration", () => {
   async function seedMigratedAccount(holster, user, namespaces, code) {
     const oldAccount = await holster.SEA.pair()
     const newAccount = await holster.SEA.pair()
-    await new Promise(resolve => {
-      user
-        .get("accounts")
-        .next(code)
-        .put({pub: newAccount.pub, prev: oldAccount.pub}, resolve)
-    })
+    await user
+      .get("accounts")
+      .next(code)
+      .put({pub: newAccount.pub, prev: oldAccount.pub})
 
     const oldSecret = await holster.SEA.secret(oldAccount, user.is)
     for (const namespace of namespaces) {
       const enc = await holster.SEA.encrypt("secret data", oldSecret)
-      await new Promise(resolve => {
-        user.get("shared").next(namespace).next(code).put(enc, true, resolve)
-      })
+      await user.get("shared").next(namespace).next(code).put(enc, true)
     }
     return {oldAccount, newAccount}
   }
@@ -150,9 +138,7 @@ describe("reshareOnMigration", () => {
   // newAccount's own secret - there's exactly one here (seedMigratedAccount
   // only ever seeds one), so this reads whichever random key it landed on.
   async function readSharedEntry(user, namespace, code) {
-    const shared = await new Promise(resolve => {
-      user.get("shared").next(namespace).next(code, resolve)
-    })
+    const shared = await user.get("shared").next(namespace).next(code)
     const [enc] = Object.values(shared || {})
     return enc
   }
@@ -218,18 +204,14 @@ describe("reshareOnMigration", () => {
     const code = newCode()
     const oldAccount = await holster.SEA.pair()
     const newAccount = await holster.SEA.pair()
-    await new Promise(resolve => {
-      user
-        .get("accounts")
-        .next(code)
-        .put({pub: newAccount.pub, prev: oldAccount.pub}, resolve)
-    })
+    await user
+      .get("accounts")
+      .next(code)
+      .put({pub: newAccount.pub, prev: oldAccount.pub})
 
     const oldSecret = await holster.SEA.secret(oldAccount, user.is)
     const enc = await holster.SEA.encrypt(5, oldSecret)
-    await new Promise(resolve => {
-      user.get("shared").next("domain_limit").next(code).put(enc, resolve)
-    })
+    await user.get("shared").next("domain_limit").next(code).put(enc)
 
     await reshareOnMigration(
       user,
@@ -240,9 +222,7 @@ describe("reshareOnMigration", () => {
       newAccount,
     )
 
-    const updated = await new Promise(resolve => {
-      user.get("shared").next("domain_limit").next(code, resolve)
-    })
+    const updated = await user.get("shared").next("domain_limit").next(code)
     const newSecret = await holster.SEA.secret(newAccount, user.is)
     assert.equal(await holster.SEA.decrypt(updated, newSecret), 5)
     assert.equal(await holster.SEA.decrypt(updated, oldSecret), null)
@@ -282,12 +262,10 @@ describe("reshareOnMigration", () => {
     const code = newCode()
     const oldAccount = await holster.SEA.pair()
     const newAccount = await holster.SEA.pair()
-    await new Promise(resolve => {
-      user
-        .get("accounts")
-        .next(code)
-        .put({pub: newAccount.pub, prev: oldAccount.pub}, resolve)
-    })
+    await user
+      .get("accounts")
+      .next(code)
+      .put({pub: newAccount.pub, prev: oldAccount.pub})
 
     // Just confirming this doesn't throw with nothing to re-encrypt.
     await reshareOnMigration(

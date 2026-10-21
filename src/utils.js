@@ -22,7 +22,7 @@ export function newCode() {
 }
 
 export async function checkCodes(user, loginCodes, newCodes) {
-  const accounts = await new Promise(resolve => user.get("accounts", resolve))
+  const accounts = await user.get("accounts")
   const existing = Object.keys(accounts || {})
   for (const code of newCodes) {
     if (existing.includes(code)) return false
@@ -58,10 +58,9 @@ export async function createLoginCodes(
   for (const code of newCodes) {
     const login = {code, owner: owner ?? ""}
     const enc = await holster.SEA.encrypt(login, user.is)
-    let err = await new Promise(resolve => {
-      user.get("available").next("login_codes").put(enc, true, resolve)
-    })
-    if (err) {
+    try {
+      await user.get("available").next("login_codes").put(enc, true)
+    } catch (err) {
       console.log(err)
       return false
     }
@@ -70,14 +69,9 @@ export async function createLoginCodes(
     if (!owner) continue
 
     const shared = await holster.SEA.encrypt(code, secret)
-    err = await new Promise(resolve => {
-      user
-        .get("shared")
-        .next("login_codes")
-        .next(owner)
-        .put(shared, true, resolve)
-    })
-    if (err) {
+    try {
+      await user.get("shared").next("login_codes").next(owner).put(shared, true)
+    } catch (err) {
       console.log(err)
       return false
     }
@@ -108,9 +102,7 @@ export async function reshareOnMigration(
   oldAccount,
   newAccount,
 ) {
-  const current = await new Promise(resolve => {
-    user.get("accounts").next(code, resolve)
-  })
+  const current = await user.get("accounts").next(code)
   if (
     !current ||
     current.pub !== newAccount.pub ||
@@ -123,18 +115,18 @@ export async function reshareOnMigration(
   const oldSecret = await holster.SEA.secret(oldAccount, user.is)
   const newSecret = await holster.SEA.secret(newAccount, user.is)
   for (const namespace of namespaces) {
-    const shared = await new Promise(resolve => {
-      user.get("shared").next(namespace).next(code, resolve)
-    })
+    const shared = await user.get("shared").next(namespace).next(code)
     if (!shared) continue
 
     if (isEncrypted(shared)) {
       const dec = await holster.SEA.decrypt(shared, oldSecret)
       const enc = await holster.SEA.encrypt(dec, newSecret)
-      const err = await new Promise(resolve => {
-        user.get("shared").next(namespace).next(code).put(enc, resolve)
-      })
-      if (err) console.log(err)
+      await user
+        .get("shared")
+        .next(namespace)
+        .next(code)
+        .put(enc)
+        .catch(err => console.log(err))
       continue
     }
 
@@ -143,15 +135,13 @@ export async function reshareOnMigration(
 
       const dec = await holster.SEA.decrypt(encrypted, oldSecret)
       const enc = await holster.SEA.encrypt(dec, newSecret)
-      const err = await new Promise(resolve => {
-        user
-          .get("shared")
-          .next(namespace)
-          .next(code)
-          .next(key)
-          .put(enc, resolve)
-      })
-      if (err) console.log(err)
+      await user
+        .get("shared")
+        .next(namespace)
+        .next(code)
+        .next(key)
+        .put(enc)
+        .catch(err => console.log(err))
     }
   }
 }

@@ -95,6 +95,7 @@ describe("/signup", () => {
     const {url} = await startTestRouter(t, {holster, user, opts: {}})
 
     const res = await post(url, "/signup", await signedBody(holster))
+    assert.equal(res.status, 403)
     assert.equal(await res.text(), "Signup is not available")
   })
 
@@ -167,9 +168,7 @@ describe("/signup", () => {
     const res = await post(url, "/signup", body)
     assert.equal(res.status, 200)
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     assert.equal(account.pub, body.pub)
     assert.equal(account.username, "alice")
 
@@ -361,9 +360,7 @@ describe("/verify-login-code", () => {
     const res = await post(url, "/verify-login-code", {code, ...body})
     assert.equal(res.status, 200)
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     assert.equal(account.pub, body.pub)
     assert.equal(mail.calls[0][0], "validateEmail")
     assert.equal(loginCodes.has(code), false)
@@ -407,9 +404,7 @@ describe("/update-password", () => {
     // encrypted for alice's current (about-to-be-old) key.
     const oldSecret = await holster.SEA.secret({pub, epub}, user.is)
     const enc = await holster.SEA.encrypt("shared-code", oldSecret)
-    await new Promise(resolve => {
-      user.get("shared").next("login_codes").next(code).put(enc, true, resolve)
-    })
+    await user.get("shared").next("login_codes").next(code).put(enc, true)
 
     const reset = await requestReset(url, mail, code, "alice@example.com")
     const newPair = await holster.SEA.pair()
@@ -424,9 +419,7 @@ describe("/update-password", () => {
     })
     assert.equal(res.status, 200)
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     assert.equal(account.pub, newBody.pub)
     assert.equal(account.prev, pub)
     // The reset code is single-use - a successful update clears it so the
@@ -435,18 +428,12 @@ describe("/update-password", () => {
     assert.equal(account.expiry, null)
 
     // The old pub's map entry is superseded, not left dangling.
-    const oldMapping = await new Promise(resolve => {
-      user.get("map").next("account:" + pub, resolve)
-    })
+    const oldMapping = await user.get("map").next("account:" + pub)
     assert.equal(oldMapping, null)
-    const newMapping = await new Promise(resolve => {
-      user.get("map").next("account:" + newBody.pub, resolve)
-    })
+    const newMapping = await user.get("map").next("account:" + newBody.pub)
     assert.equal(newMapping, code)
 
-    const shared = await new Promise(resolve => {
-      user.get("shared").next("login_codes").next(code, resolve)
-    })
+    const shared = await user.get("shared").next("login_codes").next(code)
     const [sharedEnc] = Object.values(shared)
     const newSecret = await holster.SEA.secret(
       {pub: newBody.pub, epub: newBody.epub},
@@ -476,13 +463,11 @@ describe("/update-password", () => {
 
     const oldSecret = await holster.SEA.secret({pub, epub}, user.is)
     const enc = await holster.SEA.encrypt("pending-request", oldSecret)
-    await new Promise(resolve => {
-      user
-        .get("shared")
-        .next("pending_subdomains")
-        .next(code)
-        .put(enc, true, resolve)
-    })
+    await user
+      .get("shared")
+      .next("pending_subdomains")
+      .next(code)
+      .put(enc, true)
 
     const reset = await requestReset(url, mail, code, "alice@example.com")
     const newPair = await holster.SEA.pair()
@@ -496,9 +481,10 @@ describe("/update-password", () => {
       name: "Alice",
     })
 
-    const shared = await new Promise(resolve => {
-      user.get("shared").next("pending_subdomains").next(code, resolve)
-    })
+    const shared = await user
+      .get("shared")
+      .next("pending_subdomains")
+      .next(code)
     const [sharedEnc] = Object.values(shared)
     const newSecret = await holster.SEA.secret(
       {pub: newBody.pub, epub: newBody.epub},

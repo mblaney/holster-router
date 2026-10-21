@@ -100,36 +100,29 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       validate: encValidate,
       ref: login.owner,
     }
-    let err = await new Promise(resolve => {
-      user.get("accounts").next(code).put(data, resolve)
-    })
-    if (err) {
+    try {
+      await user.get("accounts").next(code).put(data)
+    } catch (err) {
       console.log(err)
       return {status: 500, message: "Host error"}
     }
 
     // Also map the code to the user's public key to make login easier.
-    err = await new Promise(resolve => {
-      user
+    try {
+      await user
         .get("map")
         .next("account:" + body.pub)
-        .put(code, resolve)
-    })
-    if (err) {
+        .put(code)
+    } catch (err) {
       console.log(err)
       return {status: 500, message: "Host error"}
     }
 
     mail.validateEmail(body.username, body.email, code, validate)
     // Remove login code as it's no longer available.
-    err = await new Promise(resolve => {
-      user
-        .get("available")
-        .next("login_codes")
-        .next(login.key)
-        .put(null, resolve)
-    })
-    if (err) {
+    try {
+      await user.get("available").next("login_codes").next(login.key).put(null)
+    } catch (err) {
       console.log(err)
       return {status: 500, message: "Host error"}
     }
@@ -139,9 +132,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
     if (!login.owner || code === "admin") return null
 
     // Also remove from shared codes of the login owner.
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(login.owner, resolve)
-    })
+    const account = await user.get("accounts").next(login.owner)
     if (!account || !account.epub) {
       console.log(`Account not found for login.owner: ${login.owner}`)
       return null
@@ -221,7 +212,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
 
   router.post("/signup", async (req, res) => {
     if (!opts.signup) {
-      res.send("Signup is not available")
+      res.status(403).send("Signup is not available")
       return
     }
     if (!ipLimiter(req.ip)) {
@@ -345,9 +336,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       return
     }
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     if (!account) {
       res.status(404).send("Account not found")
       return
@@ -393,9 +382,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       return
     }
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     if (!account) {
       res.status(404).send("Account not found")
       return
@@ -476,9 +463,7 @@ export function createRouter(holster, loginCodes, mail, accountDefaults, opts) {
       return
     }
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     if (!account) {
       res.status(404).send("Account not found")
       return

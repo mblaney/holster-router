@@ -6,6 +6,7 @@ name: Node.js Package
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,13 +22,19 @@ jobs:
   publish-npm:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Trusted Publishing (OIDC) needs npm >=11.5.1, newer than Node
+          # 20's bundled npm - npm@latest (currently 12.x) now requires
+          # Node >=22.22.2 itself, so this job needs a newer Node than the
+          # build job above (which doesn't self-upgrade npm) still does.
+          node-version: 22
           registry-url: https://registry.npmjs.org/
       - run: npm ci
-      - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.npm_token}}
+      - run: npm install -g npm@latest
+      - run: npm publish --provenance

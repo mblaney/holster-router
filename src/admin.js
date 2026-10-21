@@ -38,9 +38,7 @@ export function createAdmin(holster, loginCodes, mail, opts) {
       return
     }
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     if (!account || !account.epub) {
       res.status(404).send("Account not found")
       return
@@ -101,9 +99,7 @@ export function createAdmin(holster, loginCodes, mail, opts) {
       return
     }
 
-    const account = await new Promise(resolve => {
-      user.get("accounts").next(code, resolve)
-    })
+    const account = await user.get("accounts").next(code)
     if (!account) {
       res.status(404).send("Account not found")
       return
