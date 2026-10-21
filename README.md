@@ -100,9 +100,7 @@ These routes are mounted by `router` and require no authentication.
 - `GET /host-public-key` — Returns the host account's public key. The browser needs this to query data stored under the host's namespace in Holster. For example, after a user authenticates locally with Holster, the frontend can look up the user's login code using the host public key:
 
   ```js
-  const code = await new Promise(res => {
-    user.get([host, "map"]).next("account:" + user.is.pub, res)
-  })
+  const code = await user.get([host, "map"]).next("account:" + user.is.pub)
   ```
 
 - `POST /request-login-code` — Sends an email to the provided address requesting a login code from the host. Required: `email`.
